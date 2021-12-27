@@ -41,7 +41,7 @@ $cmd
 def parse_args():
     parser = argparse.ArgumentParser(
         description='''
-easy_sbatch - Batch submitting Slurm jobs with script template
+easy_sbatch - Batch submitting Slurm jobs via script templates
 
 https://github.com/shenwei356/easy_sbatch 
 

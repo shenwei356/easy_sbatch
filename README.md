@@ -1,6 +1,6 @@
 # easy_sbatch
 
-easy_sbatch - Batch submitting Slurm jobs with script template
+easy_sbatch - Batch submitting Slurm jobs via script templates
 
 ## Install
 
