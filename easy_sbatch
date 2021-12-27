@@ -1,0 +1,296 @@
+#!/usr/bin/env python
+# python >= 2.7
+import argparse
+import logging
+import os
+import sys
+import re
+import tempfile
+import copy
+import getpass
+import subprocess
+import shutil
+import select
+from string import Template
+from datetime import date
+from multiprocessing import cpu_count, Pool
+from argparse import RawTextHelpFormatter
+
+template_dir = os.path.join(os.path.expanduser('~'), '.easy_sbatch')
+template_default = os.path.join(template_dir, 'default.slurm')
+template_default_text = '''#!/bin/bash
+#
+#SBATCH --partition $partition
+#SBATCH --job-name $name
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=$ncpus
+#SBATCH --mem=$mem
+#SBATCH --time=$walltime
+#SBATCH --output=$output
+#SBATCH --error=$error
+
+
+cd $$SLURM_SUBMIT_DIR
+# echo run on node: $$HOSTNAME >&2
+
+$cmd
+
+'''
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='''
+easy_sbatch - Batch submitting Slurm jobs with script template
+
+https://github.com/shenwei356/easy_sbatch 
+
+Slurm script template:
+
+  - Default template is ~/.easy_qsub/default.slurm .
+  - You can also choose another one via the option -t/--template.
+  - You can edit the value of an option, e.g., replace "$partition"
+    with the default partition of your cluster. But note that the
+    corresponding option from the command line will not take effect
+    since no variable name is ready to replace.
+
+Supported replacement strings in command:
+
+  - "{}" for the full path of a input file.
+  - "{/}" for dirname.
+  - "{%}" for basename.
+  - "{^suffix}" for clipping $suffix.
+  - "{%^suffix}" for clipping $suffix from basename.
+
+The generated Slurm scripts are saved in /tmp/easy_qsub-user/ by default,
+unless the flag -O/--script is set. If jobs are submitted successfully,
+the scripts will be moved to the current directory. If not, they will
+be removed.
+
+Examples:
+
+  1. No file or data given:
+      $ easy_sbatch 'cat /etc/hostname'
+
+  2. From position arguments:
+      $ easy_sbatch 'ls {}' *.fq.gz
+
+  3. From stdin:
+      $ ls *.fq.gz | easy_sbatch 'echo {/} {%} {%^.fq.gz}'
+
+  4. Slurm script and its output files:
+      $ easy_sbatch 'ls' -J hello
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:57 hello.15565039.err
+        -rw-r--r-- 1 shenwei cqmu  85 Dec 27 20:57 hello.15565039.out
+        -rw------- 1 shenwei cqmu 281 Dec 27 20:57 hello.15565039.slurm
+
+  5. Processing paired-ends FASTQ files:
+      $ ls read_1.fq.gz | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
+
+      $ cat pe.15565114.out 
+        seqtk mergepe read_1.fq.gz read_2.fq.gz
+
+''',
+        epilog='''https://github.com/shenwei356/easy_sbatch
+''', formatter_class=RawTextHelpFormatter)
+
+    parser.add_argument('command', type=str, help='command to submit')
+    parser.add_argument('files', type=str, nargs='*', help='input files')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-lp', '--local_p', action='store_true',
+                       help='run commands locally, parallelly')
+    group.add_argument('-ls', '--local_s', action='store_true',
+                       help='run commands locally, serially')
+
+    parser.add_argument('-J', '--name', type=str, default="easy_sbatch",
+                        help='job name (default: easy_sbatch)')
+    parser.add_argument('-c', '--ncpus', type=int, default=24, # cpu_count(),
+                        help='number of cpus required per task (default: 24)')
+    parser.add_argument('-m', '--mem', type=str, default='24gb',
+                        help='memory (default: 24gb)')
+    parser.add_argument('-p', '--partition', type=str, default='kshdnormal',
+                        help='partition requested (default: kshdnormal)')
+    parser.add_argument('-w', '--walltime', type=str, default='30-00:00:00',
+                        help='walltime (default: 30-00:00:00)')
+    parser.add_argument('-t', '--template', type=str, default=template_default,
+                        help='script template (default: {}'.format(template_default))
+    parser.add_argument('-O', '--script', type=str, help='output script file')
+    parser.add_argument('-o', '--output', type=str, help="file for batch script's standard output (default: <name>.<jobID>.out])")
+    parser.add_argument('-e', '--error', type=str, help="file for batch script's standard error (default: <name>.<jobID>.err])")
+    parser.add_argument('-v', '--verbose', help='verbosely print information. -vv for just printing command ' +
+                                                'not creating scripts and submitting jobs',
+                        action="count", default=0)
+
+    args = parser.parse_args()
+
+    if not args.template:
+        args.template = template_default
+
+    if not args.name:
+        logging.error('option -J/--name should not be empty')
+        sys.exit(1)
+
+    if not args.output:
+        args.output = '{}.%j.out'.format(args.name)
+
+    if not args.error:
+        args.error = '{}.%j.err'.format(args.name)
+
+    # logging level
+    if args.verbose >= 2:
+        level = logging.DEBUG
+    elif args.verbose == 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+    logging.basicConfig(level=level, format="[%(levelname)s] %(message)s")
+
+    return args
+
+
+def check_default_template():
+    if not os.path.exists(template_dir):
+        os.mkdir(template_dir)
+    if not os.path.exists(template_default):
+        with open(template_default, 'wt') as fh:
+            fh.write(template_default_text)
+
+
+def generate_script(args):
+    file_template = args.template
+    if not os.path.exists(file_template):
+        logging.warning(
+            "Template file not found: {}. Use default template instead.".format(file_template))
+        file_template = template_default
+    template = Template(''.join(open(file_template, 'rt').readlines()))
+
+    file_script = args.script
+    if not file_script:
+        tmpdir = os.path.join(tempfile.gettempdir(), 'easy_sbatch-' + getpass.getuser())
+        if not os.path.exists(tmpdir):
+            os.mkdir(tmpdir)
+        (_, file_script) = tempfile.mkstemp(prefix=str(date.today()) + '_', suffix='.slurm', dir=tmpdir)
+
+    open(file_script, 'wt').write(template.substitute({'name': args.name, 'mem': args.mem, 'partition': args.partition,
+                                                       'ncpus': args.ncpus, 'walltime': args.walltime,'error': args.error,
+                                                       'output': args.output, 'cmd': args.command}))
+
+    return file_script
+
+
+def submit_job(args):
+    file_script = generate_script(args)
+    logging.info("create script: {} with command: {}".format(file_script, args.command))
+
+    cmd = 'sbatch {}'.format(file_script)
+    # os.system(cmd)
+
+    output = ''
+    try:
+        if sys.version_info[0] == 3:
+            output = subprocess.getoutput(cmd)  # bug: fail to catch the exception
+        else:
+            output = subprocess.check_output(cmd.split())
+    except:
+        logging.error("fail to run: {}".format(cmd))
+        os.remove(file_script)
+        sys.exit(1)
+
+    print(output)
+
+    found = re.findall('^Submitted batch job (\d+)$', output)
+    if len(found) == 0:
+        logging.error("fail to run: {}".format(cmd))
+        os.remove(file_script)
+        sys.exit(1)
+
+    jobid = found[0]
+    if not args.script and os.access('./', os.W_OK):
+        shutil.move(file_script, '{}.{}.slurm'.format(args.name, jobid))
+
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    check_default_template()
+
+    pattern = re.compile(r'{([^{}]*)}')
+
+    files = args.files
+    if not files and select.select([sys.stdin,], [], [], 0.0)[0]: # stdin given
+        files = sys.stdin
+
+    matched = pattern.findall(args.command)
+    if matched:
+        if files:
+            cmds = list()  # for local run
+
+            for file in files:
+                file = file.rstrip()
+                cmd = args.command
+                for c in matched:
+                    repl = ''
+                    if c == '':
+                        repl = file
+                    elif c.startswith('%^'):
+                        file = os.path.basename(file)
+                        i = file.rfind(c[2:])
+                        if i > 0:
+                            repl = file[:file.rfind(c[2:])]
+                        else:
+                            repl = file
+                    elif c[0] == '^':
+                        i = file.rfind(c[1:])
+                        if i > 0:
+                            repl = file[:file.rfind(c[1:])]
+                        else:
+                            repl = file
+                    elif c[0] == '/':
+                        repl = os.path.dirname(file)
+                        if repl == '':
+                            repl = './'
+                    elif c[0] == '%':
+                        repl = os.path.basename(file)
+                    # else:
+                    #     logging.error("unsupported fromat: {}".format(c))
+                    #     sys.exit(1)
+
+                    cmd = pattern.sub(repl, cmd, 1)
+
+                if args.verbose > 1:
+                    logging.debug('command: {}'.format(cmd))
+                else:
+                    if args.local_p or args.local_s:
+                        cmds.append(cmd)
+                    else:
+                        args_copy = copy.copy(args)
+                        args_copy.command = cmd
+                        submit_job(args_copy)
+
+            # local run
+            if args.local_p:
+                pool = Pool(processes=args.ncpus)
+                pool.map(os.system, cmds)
+                pool.close()
+                pool.join()
+            elif args.local_s:
+                for cmd in cmds:
+                    os.system(cmd)
+
+        else:
+            logging.error("'{}' found in command, but no file glob expression given")
+            sys.exit(1)
+
+    else:  # single job
+        if files:
+            logging.error('input files are given but no "{}" found in command')
+            sys.exit(1)
+        else:
+            if args.verbose > 1:
+                logging.debug('command: {}'.format(args.command))
+            else:
+                if args.local_p or args.local_s:
+                    os.system(args.command)
+                else:
+                    submit_job(args)
