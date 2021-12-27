@@ -69,25 +69,40 @@ be removed.
 
 Examples:
 
-  1. No file or data given:
+  1. A simple command (no file or data given):
       $ easy_sbatch 'cat /etc/hostname'
 
-  2. From position arguments:
-      $ easy_sbatch 'ls {}' *.fq.gz
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:50 easy_sbatch.15565347.err
+        -rw-r--r-- 1 shenwei cqmu   9 Dec 27 21:50 easy_sbatch.15565347.out
+        -rw------- 1 shenwei cqmu 314 Dec 27 21:50 easy_sbatch.15565347.slurm
+
+  2. Handling multiple files and specifying a job name:
+      $ easy_sbatch 'ls {}' *.fq.gz -J list
+
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:54 list.15565371-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:54 list.15565371-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565371-read_1.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:55 list.15565373-read_2.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:55 list.15565373-read_2.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565373-read_2.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_1.fq.gz
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_2.fq.gz
 
   3. From stdin:
       $ ls *.fq.gz | easy_sbatch 'echo {/} {%} {%^.fq.gz}'
 
-  4. Slurm script and its output files:
-      $ easy_sbatch 'ls' -J hello
-        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:57 hello.15565039.err
-        -rw-r--r-- 1 shenwei cqmu  85 Dec 27 20:57 hello.15565039.out
-        -rw------- 1 shenwei cqmu 281 Dec 27 20:57 hello.15565039.slurm
+  4. Processing paired-ends FASTQ files:
+      $ ls read_1.fq.gz \
+            | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
 
-  5. Processing paired-ends FASTQ files:
-      $ ls read_1.fq.gz | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:56 pe.15565379-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  40 Dec 27 21:56 pe.15565379-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 340 Dec 27 21:56 pe.15565379-read_1.fq.gz.slurm
 
-      $ cat pe.15565114.out 
+      $ cat pe.15565379-read_1.fq.gz.out
         seqtk mergepe read_1.fq.gz read_2.fq.gz
 
 ''',
@@ -131,12 +146,6 @@ Examples:
         logging.error('option -J/--name should not be empty')
         sys.exit(1)
 
-    if not args.output:
-        args.output = '{}.%j.out'.format(args.name)
-
-    if not args.error:
-        args.error = '{}.%j.err'.format(args.name)
-
     # logging level
     if args.verbose >= 2:
         level = logging.DEBUG
@@ -157,7 +166,7 @@ def check_default_template():
             fh.write(template_default_text)
 
 
-def generate_script(args):
+def generate_script(args, file=None):
     file_template = args.template
     if not os.path.exists(file_template):
         logging.warning(
@@ -172,15 +181,30 @@ def generate_script(args):
             os.mkdir(tmpdir)
         (_, file_script) = tempfile.mkstemp(prefix=str(date.today()) + '_', suffix='.slurm', dir=tmpdir)
 
+    outfile = args.output
+    errfile = args.error
+    if file:
+        if not args.output:
+            outfile = '{}.%j-{}.out'.format(args.name, os.path.basename(file))
+
+        if not args.error:
+            errfile = '{}.%j-{}.err'.format(args.name, os.path.basename(file))
+    else:
+        if not args.output:
+            outfile = '{}.%j.out'.format(args.name)
+
+        if not args.error:
+            errfile = '{}.%j.err'.format(args.name)
+
     open(file_script, 'wt').write(template.substitute({'name': args.name, 'mem': args.mem, 'partition': args.partition,
-                                                       'ncpus': args.ncpus, 'walltime': args.walltime,'error': args.error,
-                                                       'output': args.output, 'cmd': args.command}))
+                                                       'ncpus': args.ncpus, 'walltime': args.walltime, 'error': errfile,
+                                                       'output': outfile, 'cmd': args.command}))
 
     return file_script
 
 
-def submit_job(args):
-    file_script = generate_script(args)
+def submit_job(args, file=None):
+    file_script = generate_script(args, file)
     logging.info("create script: {} with command: {}".format(file_script, args.command))
 
     cmd = 'sbatch {}'.format(file_script)
@@ -206,8 +230,11 @@ def submit_job(args):
         sys.exit(1)
 
     jobid = found[0]
-    if not args.script and os.access('./', os.W_OK):
-        shutil.move(file_script, '{}.{}.slurm'.format(args.name, jobid))
+    if not args.script and os.access('./', os.W_OK):        
+        if file:
+            shutil.move(file_script, '{}.{}-{}.slurm'.format(args.name, jobid, os.path.basename(file)))
+        else:
+            shutil.move(file_script, '{}.{}.slurm'.format(args.name, jobid))
 
 
 if __name__ == '__main__':
@@ -266,7 +293,7 @@ if __name__ == '__main__':
                     else:
                         args_copy = copy.copy(args)
                         args_copy.command = cmd
-                        submit_job(args_copy)
+                        submit_job(args_copy, file)
 
             # local run
             if args.local_p:

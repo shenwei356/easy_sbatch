@@ -10,30 +10,44 @@ easy_sbatch - Batch submitting Slurm jobs with script template
 
 ## Quick start
 
-1. No file or data given:
-    
+1. A simple command (no file or data given):
+
         $ easy_sbatch 'cat /etc/hostname'
 
-2. From position arguments:
+        $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:50 easy_sbatch.15565347.err
+        -rw-r--r-- 1 shenwei cqmu   9 Dec 27 21:50 easy_sbatch.15565347.out
+        -rw------- 1 shenwei cqmu 314 Dec 27 21:50 easy_sbatch.15565347.slurm
 
-        $ easy_sbatch 'ls {}' *.fq.gz
+2. Handling multiple files and specifying a job name:
+
+        $ easy_sbatch 'ls {}' *.fq.gz -J list
+
+        $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:54 list.15565371-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:54 list.15565371-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565371-read_1.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:55 list.15565373-read_2.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:55 list.15565373-read_2.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565373-read_2.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_1.fq.gz
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_2.fq.gz
 
 3. From stdin:
 
         $ ls *.fq.gz | easy_sbatch 'echo {/} {%} {%^.fq.gz}'
 
-4. Slurm script and its output files:
+4. Processing paired-ends FASTQ files:
 
-        $ easy_sbatch 'ls' -J hello
-        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:57 hello.15565039.err
-        -rw-r--r-- 1 shenwei cqmu  85 Dec 27 20:57 hello.15565039.out
-        -rw------- 1 shenwei cqmu 281 Dec 27 20:57 hello.15565039.slurm
+        $ ls read_1.fq.gz \
+            | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
 
-5. Processing paired-ends FASTQ files:
+        $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:56 pe.15565379-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  40 Dec 27 21:56 pe.15565379-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 340 Dec 27 21:56 pe.15565379-read_1.fq.gz.slurm
 
-        $ ls read_1.fq.gz | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
-
-        $ cat pe.15565114.out 
+        $ cat pe.15565379-read_1.fq.gz.out
         seqtk mergepe read_1.fq.gz read_2.fq.gz
 
 ## Default template
