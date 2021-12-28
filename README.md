@@ -10,10 +10,11 @@ easy_sbatch - Batch submitting Slurm jobs via script templates
 
 ## Quick start
 
-1. A simple command (no file or data given):
+1. A simple command (no files or data given):
 
         $ easy_sbatch 'cat /etc/hostname'
-
+        Submitted batch job 15565347
+        
         $ ls
         -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:50 easy_sbatch.15565347.err
         -rw-r--r-- 1 shenwei cqmu   9 Dec 27 21:50 easy_sbatch.15565347.out
@@ -22,6 +23,8 @@ easy_sbatch - Batch submitting Slurm jobs via script templates
 2. Handling multiple files and specifying a job name:
 
         $ easy_sbatch 'ls {}' *.fq.gz -J list
+        Submitted batch job 15565371
+        Submitted batch job 15565373
 
         $ ls
         -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:54 list.15565371-read_1.fq.gz.err
@@ -41,6 +44,7 @@ easy_sbatch - Batch submitting Slurm jobs via script templates
 
         $ ls read_1.fq.gz \
             | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
+        Submitted batch job 15565379
 
         $ ls
         -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:56 pe.15565379-read_1.fq.gz.err
@@ -52,9 +56,9 @@ easy_sbatch - Batch submitting Slurm jobs via script templates
 
 ## Default template
 
-You can choose another one via the option `-t/--template`.
+You can choose another template via the option `-t/--template`.
 
-You can edit the value of an option, e.g., replace `$partition`
+You can also edit the value of an option, e.g., replace `$partition`
   with the default partition of your cluster. But note that the
   corresponding option from the command line will not take effect
   since no variable name is ready to replace.
@@ -115,25 +119,39 @@ be removed.
 
 Examples:
 
-  1. No file or data given:
+  1. A simple command (no file or data given):
       $ easy_sbatch 'cat /etc/hostname'
 
-  2. From position arguments:
-      $ easy_sbatch 'ls {}' *.fq.gz
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:50 easy_sbatch.15565347.err
+        -rw-r--r-- 1 shenwei cqmu   9 Dec 27 21:50 easy_sbatch.15565347.out
+        -rw------- 1 shenwei cqmu 314 Dec 27 21:50 easy_sbatch.15565347.slurm
+
+  2. Handling multiple files and specifying a job name:
+      $ easy_sbatch 'ls {}' *.fq.gz -J list
+
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:54 list.15565371-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:54 list.15565371-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565371-read_1.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:55 list.15565373-read_2.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  13 Dec 27 21:55 list.15565373-read_2.fq.gz.out
+        -rw------- 1 shenwei cqmu 317 Dec 27 21:54 list.15565373-read_2.fq.gz.slurm
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_1.fq.gz
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:04 read_2.fq.gz
 
   3. From stdin:
       $ ls *.fq.gz | easy_sbatch 'echo {/} {%} {%^.fq.gz}'
 
-  4. Slurm script and its output files:
-      $ easy_sbatch 'ls' -J hello
-        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 20:57 hello.15565039.err
-        -rw-r--r-- 1 shenwei cqmu  85 Dec 27 20:57 hello.15565039.out
-        -rw------- 1 shenwei cqmu 281 Dec 27 20:57 hello.15565039.slurm
-
-  5. Processing paired-ends FASTQ files:
+  4. Processing paired-ends FASTQ files:
       $ ls read_1.fq.gz | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
 
-      $ cat pe.15565114.out 
+      $ ls
+        -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:56 pe.15565379-read_1.fq.gz.err
+        -rw-r--r-- 1 shenwei cqmu  40 Dec 27 21:56 pe.15565379-read_1.fq.gz.out
+        -rw------- 1 shenwei cqmu 340 Dec 27 21:56 pe.15565379-read_1.fq.gz.slurm
+
+      $ cat pe.15565379-read_1.fq.gz.out
         seqtk mergepe read_1.fq.gz read_2.fq.gz
 
 positional arguments:

@@ -94,8 +94,7 @@ Examples:
       $ ls *.fq.gz | easy_sbatch 'echo {/} {%} {%^.fq.gz}'
 
   4. Processing paired-ends FASTQ files:
-      $ ls read_1.fq.gz \
-            | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
+      $ ls read_1.fq.gz | easy_sbatch 'echo seqtk mergepe {} {^_1.fq.gz}_2.fq.gz' -J pe
 
       $ ls
         -rw-r--r-- 1 shenwei cqmu   0 Dec 27 21:56 pe.15565379-read_1.fq.gz.err
